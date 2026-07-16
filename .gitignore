@@ -1,0 +1,18 @@
+# Local CRM data. Do not commit pipeline/opportunity records.
+crm.db
+*.db
+backups/
+
+# Local credentials and machine-specific config.
+.env
+*.local
+
+# Python/runtime artifacts.
+__pycache__/
+*.py[cod]
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
