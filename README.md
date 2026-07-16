@@ -9,21 +9,31 @@ It runs on `localhost`, stores data in a local SQLite file, and creates Gmail dr
 For most teammates:
 
 ```text
-Windows / ThinkPad: double-click start-crm.bat
+Linux ThinkPad: open Terminal in this folder and run sh start-crm.sh
+Windows: double-click start-crm.bat
 Mac: double-click start-crm.command
-Linux: run ./start-crm.sh
 ```
 
 Keep the launcher window open while using the app.
+
+If the browser does not open automatically, manually open `http://127.0.0.1:8765`.
+
+If Linux says the command is not found, make sure they are in the unzipped app folder and run:
+
+```bash
+sh start-crm.sh
+```
+
+If Linux says Python is missing, install Python 3 through the software center or ask IT to install `python3`.
 
 If Windows says the site cannot be connected, keep the black terminal window open and refresh the browser after a few seconds. If the terminal says Python is missing, install Python for Windows and check **Add python.exe to PATH** during install.
 
 To update later after your manager publishes a new version:
 
 ```text
-Windows / ThinkPad: double-click update-crm.bat
+Linux ThinkPad: open Terminal in this folder and run sh update-crm.sh
+Windows: double-click update-crm.bat
 Mac: double-click update-crm.command
-Linux: run ./update-crm.sh
 ```
 
 Updates pull the newest app files from GitHub. They do not upload or overwrite the teammate's local `crm.db` data.
