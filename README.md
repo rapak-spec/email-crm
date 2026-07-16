@@ -11,12 +11,18 @@ For most teammates:
 ```text
 Linux ThinkPad: open Terminal in this folder and run sh start-crm.sh
 Windows: double-click start-crm.bat
-Mac: double-click start-crm.command
+Mac: open Terminal in this folder and run sh start-crm.sh
 ```
 
 Keep the launcher window open while using the app.
 
 If the browser does not open automatically, manually open `http://127.0.0.1:8765`.
+
+If Mac says **start-crm.command Not Opened**, click **Done** and use Terminal instead:
+
+```bash
+sh start-crm.sh
+```
 
 If Linux says the command is not found, make sure they are in the unzipped app folder and run:
 
@@ -33,7 +39,7 @@ To update later after your manager publishes a new version:
 ```text
 Linux ThinkPad: open Terminal in this folder and run sh update-crm.sh
 Windows: double-click update-crm.bat
-Mac: double-click update-crm.command
+Mac: open Terminal in this folder and run sh update-crm.sh
 ```
 
 Updates pull the newest app files from GitHub. They do not upload or overwrite the teammate's local `crm.db` data.
