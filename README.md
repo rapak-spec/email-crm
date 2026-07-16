@@ -16,6 +16,8 @@ Linux: run ./start-crm.sh
 
 Keep the launcher window open while using the app.
 
+If Windows says the site cannot be connected, keep the black terminal window open and refresh the browser after a few seconds. If the terminal says Python is missing, install Python for Windows and check **Add python.exe to PATH** during install.
+
 To update later after your manager publishes a new version:
 
 ```text
