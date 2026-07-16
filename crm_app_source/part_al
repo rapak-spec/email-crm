@@ -1,0 +1,350 @@
+      });
+    }
+    function renderLeadEmailEditor() {
+      const l = state.current;
+      const count = Math.max(1, Math.min(30, Number(l.email_plan_count || state.settings.email_plan_count || 6)));
+      const templates = leadTemplates(l);
+      const presets = parsePresets();
+      $("leadEmailEditor").innerHTML = `<div class="dialog-head" style="padding:0">
+          <div><h1 style="font-size:15px">Opportunity email sequence</h1><div class="small">Tailored to this lead's sub-industry, holes, pain points, and value angle.</div></div>
+          <button id="saveLeadEmails" class="primary">Save emails</button>
+        </div>
+        <div class="grid">
+          <label><span>Sequence preset</span><select id="presetSelect"><option value="">Choose a play</option>${presets.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("")}</select></label>
+          <label><span>&nbsp;</span><button id="applyPreset">Apply preset</button></label>
+        </div>
+        <div class="fit-box"><b>What this sequence should hammer:</b><br>${esc(fitSummary(l))}</div>
+        <div class="timeline">${Array.from({length: count}, (_, i) => {
+          const n = i + 1;
+          const tpl = templates[i] || {subject:`Follow-up for {company} - email ${n}`, body:`<p>Hi {first_name},</p><p>I wanted to follow up about {industry_holes}.</p>`};
+          return `<div class="event">
+            <b>Email ${n}${n === Number(l.email_stage || 1) ? " · current" : ""}</b>
+            <label><span>Subject</span><input data-lead-subject="${i}" value="${esc(tpl.subject || "")}"></label>
+            <label><span>Body HTML</span><textarea data-lead-body="${i}">${esc(tpl.body || "")}</textarea></label>
+          </div>`;
+        }).join("")}</div>`;
+      $("saveLeadEmails").onclick = async () => {
+        const nextTemplates = Array.from({length: count}, (_, i) => ({
+          subject: document.querySelector(`[data-lead-subject="${i}"]`)?.value || "",
+          body: document.querySelector(`[data-lead-body="${i}"]`)?.value || "",
+        }));
+        await saveLead(l.id, {...state.current, lead_email_templates: JSON.stringify(nextTemplates)}, true);
+      };
+      $("applyPreset").onclick = async () => {
+        const idx = $("presetSelect").value;
+        if (idx === "") return;
+        const preset = presets[Number(idx)];
+        if (!preset) return;
+        const presetTemplates = (preset.templates || []).slice(0, count);
+        while (presetTemplates.length < count) presetTemplates.push(presetTemplates[presetTemplates.length - 1] || {subject:"Following up with {company}", body:"<p>Hi {first_name},</p><p>{custom_first_line}</p><p>{reply_cta}</p>"});
+        await saveLead(l.id, {
+          ...state.current,
+          sequence_angle: preset.angle || state.current.sequence_angle,
+          cta_style: preset.cta_style || state.current.cta_style,
+          reply_cta: preset.reply_cta || state.current.reply_cta,
+          lead_email_templates: JSON.stringify(presetTemplates),
+        }, true);
+      };
+    }
+    async function saveLead(id, data, stayOpen=false) {
+      const res = await api(`/api/leads/${id}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+      state.current = res.lead;
+      state.timeline = res.timeline;
+      await refreshLeads();
+      if (stayOpen) renderDrawer();
+    }
+    async function newLead() {
+      const values = await friendlyForm({
+        title: "Add Lead",
+        body: "Start with the company name. You can add contact details, research, and email angles after the lead opens.",
+        confirmText: "Add lead",
+        fields: [{id:"company", label:"Company name", required:true, placeholder:"Example: Acme Distribution"}]
+      });
+      if (!values) return;
+      const res = await api("/api/leads", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({company: values.company})});
+      await refreshLeads();
+      if (res.id) openLead(res.id);
+    }
+    async function markLeadLost(id) {
+      const lead = state.leads.find(l => String(l.id) === String(id));
+      const values = await lostLeadForm(lead, 1);
+      if (!values) return;
+      await api(`/api/leads/${id}/lost`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(values)});
+      if (state.current && String(state.current.id) === String(id)) $("drawer").classList.remove("open");
+      state.leadScope = "active";
+      await refreshLeads();
+    }
+    async function bulkMarkLost() {
+      const leads = selectedLeads().filter(l => l.stage !== "Lost");
+      if (!leads.length) return friendlyAlert("No Active Leads Selected", "Select one or more active leads first, then choose Mark lost.");
+      const values = await lostLeadForm(null, leads.length);
+      if (!values) return;
+      for (const lead of leads) {
+        await api(`/api/leads/${lead.id}/lost`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(values)});
+        state.selectedLeadIds.delete(String(lead.id));
+      }
+      await refreshLeads();
+    }
+    async function bulkScheduleActivity() {
+      const leads = selectedLeads();
+      if (!leads.length) return friendlyAlert("No Leads Selected", "Select the leads you want to update first, then choose Schedule activity.");
+      const values = await friendlyForm({
+        title: `Schedule Activity For ${leads.length} Lead${leads.length === 1 ? "" : "s"}`,
+        body: "This will add the same next step to every selected lead.",
+        confirmText: "Schedule activity",
+        fields: [
+          {id:"type", label:"Activity type", type:"select", value:"Call", options:["Call","Email","Meeting","To-do"], required:true},
+          {id:"due", label:"Due date", type:"date", value:new Date().toISOString().slice(0,10), required:true},
+          {id:"note", label:"Activity note", type:"textarea", value:"Follow up", required:false}
+        ]
+      });
+      if (!values) return;
+      const cleanType = ["Call","Email","Meeting","To-do"].includes(values.type) ? values.type : "To-do";
+      for (const lead of leads) {
+        await api(`/api/leads/${lead.id}/activity`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({type: cleanType, due: values.due, note: values.note})});
+      }
+      state.selectedLeadIds.clear();
+      await refreshLeads();
+    }
+    async function bulkRestoreLeads() {
+      const leads = selectedLeads().filter(l => l.stage === "Lost");
+      if (!leads.length) return friendlyAlert("No Lost Leads Selected", "Select one or more lost leads first, then choose Restore.");
+      const ok = await friendlyConfirm({
+        title: "Restore Leads",
+        body: `Move ${leads.length} selected lead${leads.length === 1 ? "" : "s"} back into Active CRM?`,
+        confirmText: "Restore"
+      });
+      if (!ok) return;
+      for (const lead of leads) {
+        await api(`/api/leads/${lead.id}/restore`, {method:"POST"});
+        state.selectedLeadIds.delete(String(lead.id));
+      }
+      state.leadScope = "active";
+      await refreshLeads();
+    }
+    async function restoreLead(id) {
+      const lead = state.leads.find(l => String(l.id) === String(id));
+      const ok = await friendlyConfirm({title:"Restore Lead", body:`Move ${lead?.company || "this lead"} back into Active CRM?`, confirmText:"Restore"});
+      if (!ok) return;
+      await api(`/api/leads/${id}/restore`, {method:"POST"});
+      state.leadScope = "active";
+      await refreshLeads();
+    }
+    async function reopenLead(id) {
+      const lead = state.leads.find(l => String(l.id) === String(id)) || state.current;
+      const ok = await friendlyConfirm({title:"Reopen Lead", body:`Move ${lead?.company || "this lead"} back into Active CRM and schedule a follow-up call?`, confirmText:"Reopen"});
+      if (!ok) return;
+      await api(`/api/leads/${id}/reopen`, {method:"POST"});
+      state.leadScope = "active";
+      if (state.current && String(state.current.id) === String(id)) await openLead(id);
+      await refreshLeads();
+    }
+    async function draftLostRecovery(id) {
+      const lead = state.leads.find(l => String(l.id) === String(id)) || state.current;
+      const ok = await friendlyConfirm({title:"Draft Recovery Email", body:`Create a Gmail recovery draft for ${lead?.company || "this lost lead"}?`, confirmText:"Draft to Gmail"});
+      if (!ok) return;
+      try {
+        await api(`/api/leads/${id}/lost-recovery-draft`, {method:"POST"});
+        await friendlyAlert("Draft Created", "Recovery email drafted in Gmail.");
+      } catch (err) {
+        await friendlyAlert("Draft Failed", err.message || "Could not create recovery draft.");
+      }
+      if (state.current && String(state.current.id) === String(id)) await openLead(id);
+      await refreshLeads();
+    }
+    async function deleteLead(id) {
+      const lead = state.leads.find(l => String(l.id) === String(id));
+      const name = lead?.company || "this lead";
+      const ok = await friendlyConfirm({title:"Delete Lead", body:`Delete ${name}? This removes the lead, notes, and activities from this app.`, confirmText:"Delete", danger:true});
+      if (!ok) return;
+      await api(`/api/leads/${id}/delete`, {method:"POST"});
+      if (state.current && String(state.current.id) === String(id)) $("drawer").classList.remove("open");
+      await refreshLeads();
+    }
+    async function bulkDeleteLeads() {
+      const leads = selectedLeads();
+      if (!leads.length) return friendlyAlert("No Leads Selected", "Select one or more leads first, then choose Delete.");
+      const ok = await friendlyConfirm({
+        title: "Delete Selected Leads",
+        body: `Delete ${leads.length} selected lead${leads.length === 1 ? "" : "s"}? This removes their notes and activities from this app.`,
+        confirmText: "Delete",
+        danger: true
+      });
+      if (!ok) return;
+      for (const lead of leads) {
+        await api(`/api/leads/${lead.id}/delete`, {method:"POST"});
+        state.selectedLeadIds.delete(String(lead.id));
+      }
+      if (state.current && !state.leads.some(l => String(l.id) === String(state.current.id) && state.selectedLeadIds.has(String(l.id)))) {
+        $("drawer").classList.remove("open");
+      }
+      await refreshLeads();
+    }
+    let modalBackdropAction = null;
+    function openModal(html, onBackdrop=null) {
+      modalBackdropAction = onBackdrop;
+      $("dialog").innerHTML = html;
+      $("modal").classList.add("open");
+    }
+    function closeModal() {
+      modalBackdropAction = null;
+      $("modal").classList.remove("open");
+    }
+    function friendlyConfirm({title, body, confirmText="Confirm", cancelText="Cancel", danger=false}) {
+      return new Promise(resolve => {
+        let done = false;
+        const finish = value => {
+          if (done) return;
+          done = true;
+          closeModal();
+          resolve(value);
+        };
+        openModal(`<div class="dialog-head"><h1>${esc(title)}</h1><button class="icon" id="modalX">×</button></div>
+          <div class="fit-box">${esc(body)}</div>
+          <div class="quick"><button id="modalCancel">${esc(cancelText)}</button><button class="${danger ? "danger" : "primary"}" id="modalConfirm">${esc(confirmText)}</button></div>`, () => finish(false));
+        $("modalX").onclick = () => finish(false);
+        $("modalCancel").onclick = () => finish(false);
+        $("modalConfirm").onclick = () => finish(true);
+      });
+    }
+    function friendlyAlert(title, body, buttonText="OK") {
+      return new Promise(resolve => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          closeModal();
+          resolve();
+        };
+        openModal(`<div class="dialog-head"><h1>${esc(title)}</h1><button class="icon" id="modalX">×</button></div>
+          <div class="fit-box">${esc(body)}</div>
+          <div class="quick"><button class="primary" id="modalConfirm">${esc(buttonText)}</button></div>`, finish);
+        $("modalX").onclick = finish;
+        $("modalConfirm").onclick = finish;
+      });
+    }
+    function friendlyField(field) {
+      const id = `modalField_${field.id}`;
+      const required = field.required ? " data-required='1'" : "";
+      if (field.type === "textarea") {
+        return `<label class="full"><span>${esc(field.label)}</span><textarea id="${id}"${required} placeholder="${esc(field.placeholder || "")}">${esc(field.value || "")}</textarea></label>`;
+      }
+      if (field.type === "select") {
+        const options = (field.options || []).map(opt => `<option value="${esc(opt)}" ${String(opt) === String(field.value || "") ? "selected" : ""}>${esc(opt)}</option>`).join("");
+        return `<label><span>${esc(field.label)}</span><select id="${id}"${required}>${options}</select></label>`;
+      }
+      return `<label><span>${esc(field.label)}</span><input id="${id}" type="${esc(field.type || "text")}" value="${esc(field.value || "")}"${required} placeholder="${esc(field.placeholder || "")}"></label>`;
+    }
+    function friendlyForm({title, body="", fields=[], confirmText="Save", cancelText="Cancel", danger=false}) {
+      return new Promise(resolve => {
+        let done = false;
+        const finish = value => {
+          if (done) return;
+          done = true;
+          closeModal();
+          resolve(value);
+        };
+        openModal(`<div class="dialog-head"><h1>${esc(title)}</h1><button class="icon" id="modalX">×</button></div>
+          ${body ? `<div class="fit-box">${esc(body)}</div>` : ""}
+          <div class="grid">${fields.map(friendlyField).join("")}</div>
+          <div id="modalFormError" class="small" style="color:#9f2633"></div>
+          <div class="quick"><button id="modalCancel">${esc(cancelText)}</button><button class="${danger ? "danger" : "primary"}" id="modalConfirm">${esc(confirmText)}</button></div>`, () => finish(null));
+        $("modalX").onclick = () => finish(null);
+        $("modalCancel").onclick = () => finish(null);
+        $("modalConfirm").onclick = () => {
+          const values = {};
+          for (const field of fields) {
+            const el = $(`modalField_${field.id}`);
+            const value = (el?.value || "").trim();
+            if (field.required && !value) {
+              $("modalFormError").textContent = `${field.label} is required.`;
+              el?.focus();
+              return;
+            }
+            values[field.id] = value;
+          }
+          finish(values);
+        };
+      });
+    }
+    async function lostLeadForm(lead, count=1) {
+      const name = lead?.company || `${count} selected lead${count === 1 ? "" : "s"}`;
+      const values = await friendlyForm({
+        title: "Mark Lost",
+        body: `Move ${name} into Lost Leads with enough context for a future recovery email.`,
+        confirmText: "Mark lost",
+        fields: [
+          {id:"category", label:"Lost category", type:"select", value:"Past demo - no move forward", options:state.lostCategories, required:true},
+          {id:"reason", label:"Short reason", type:"textarea", placeholder:"Example: Evaluated Odoo last year but stayed with current system.", required:true}
+        ]
+      });
+      if (!values) return null;
+      return {
+        category: state.lostCategories.includes(values.category) ? values.category : "Other",
+        reason: values.reason
+      };
+    }
+    function extractCsvFromGemini(text) {
+      const raw = String(text || "").trim();
+      const fenced = raw.match(/```csv\s*([\s\S]*?)```/i) || raw.match(/```\s*([\s\S]*?)```/);
+      if (fenced) return fenced[1].trim();
+      const lines = raw.split(/\r?\n/);
+      const start = lines.findIndex(line => {
+        const clean = line.trim().replace(/^\uFEFF/, "");
+        return clean.startsWith('"company","contact"') || clean.startsWith("company,contact");
+      });
+      return start >= 0 ? lines.slice(start).join("\n").trim() : raw;
+    }
+    function looksLikeImportCsv(csvText) {
+      const first = String(csvText || "").trim().split(/\r?\n/)[0] || "";
+      const normalized = first.replace(/\s+/g, "").replaceAll('"', "").toLowerCase();
+      return normalized.startsWith("company,contact,title,email,email_generic")
+        || normalized.includes("company,contact,title,email")
+        || normalized.includes("email_generic,phone,website");
+    }
+    function csvDataRowCount(csvText) {
+      return Math.max(0, String(csvText || "").trim().split(/\r?\n/).filter(Boolean).length - 1);
+    }
+    function likelySourceRowCount(rawText) {
+      const text = String(rawText || "");
+      const numbered = text.match(/^\s*\d+\s+.+@.+$/gm);
+      if (numbered && numbered.length) return numbered.length;
+      const readableRows = text.match(/^\|\s*[^|\n]+\s*\|\s*[^|\n]+\s*\|/gm);
+      if (readableRows && readableRows.length > 2) return readableRows.length - 2;
+      return 0;
+    }
+    async function openImportPreviewFromText(rawText) {
+      const csvText = extractCsvFromGemini(rawText);
+      if (!csvText) return friendlyAlert("Nothing To Import", "Paste Gemini output or CSV first.");
+      if (!looksLikeImportCsv(csvText)) {
+        openModal(`<div class="dialog-head"><h1>Import CSV Missing</h1><button class="icon" onclick="closeModal()">×</button></div>
+          <div class="fit-box">Gemini gave a readable review, but not the app import CSV block. Ask Gemini: "Now provide the IMPORT_CSV fenced csv block using the exact headers from the prompt."</div>
+          <textarea class="prompt-box">${esc(String(rawText || "").slice(0, 5000))}</textarea>
+          <div class="quick"><button id="backToGeminiPaste">Back to paste</button><button onclick="closeModal()">Close</button></div>`);
+        $("backToGeminiPaste").onclick = openGeminiPasteModal;
+        return;
+      }
+      const buffer = new TextEncoder().encode(csvText);
+      const preview = await api("/api/import-preview", {method:"POST", body: buffer});
+      const c = preview.counts;
+      const csvRows = csvDataRowCount(csvText);
+      const sourceRows = likelySourceRowCount(rawText);
+      const partialWarning = sourceRows && csvRows < sourceRows
+        ? `<div class="event" style="border-color:#f0d08a;background:#fff7df"><b>Possible partial Gemini output</b>Extracted ${csvRows} import rows, but the pasted response appears to mention about ${sourceRows} rows. Ask Gemini to provide IMPORT_CSV for every input account.</div>`
+        : "";
+      openModal(`<div class="dialog-head"><h1>Import Preview</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="fit-box">The app extracted ${csvText.split(/\r?\n/).length} CSV lines from the pasted Gemini output. Weak rows can import, but they will be blocked from drafting until fixed.</div>
+        ${partialWarning}
+        <div class="grid">
+          <div class="event"><b>Total rows</b>${c.rows}</div>
+          <div class="event"><b>Looks ready</b>${c.ready}</div>
+          <div class="event"><b>Missing direct email</b>${c.missing_direct_email}</div>
+          <div class="event"><b>Duplicates</b>${c.duplicates}</div>
+          <div class="event"><b>Suppressed</b>${c.suppressed}</div>
+          <div class="event"><b>Weak Gemini research</b>${c.weak_research || 0}</div>
+          <div class="event"><b>Malformed rows</b>${c.malformed || 0}</div>
+          <div class="event"><b>Missing company</b>${c.missing_company}</div>
+        </div>
+        <div class="timeline">${(preview.samples || []).map(s => `<div class="event"><b>${esc(s.company)}</b>${esc(s.email || "")}<br><span class="small">${esc(s.issues.join(", "))}</span></div>`).join("") || `<div class="small">No obvious issues found.</div>`}</div>
+        <div class="quick"><button class="primary" id="confirmPastedImport">Import extracted rows</button><button id="backToGeminiPaste">Back to paste</button></div>`);
+      $("confirmPastedImport").onclick = async () => {

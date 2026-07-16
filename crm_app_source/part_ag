@@ -1,0 +1,350 @@
+        "cta_style": ["cta_style", "CTA Style", "Call To Action Style"],
+        "reply_cta": ["reply_cta", "Reply CTA", "CTA", "Reply Call To Action"],
+    }
+    counts = {"created": 0, "duplicate": 0, "suppressed": 0, "skipped": 0}
+    for row in reader:
+        if None in row:
+            counts["skipped"] += 1
+            continue
+        data = {}
+        for field, aliases in mapping.items():
+            data[field] = ""
+            for alias in aliases:
+                if alias in row and row[alias]:
+                    data[field] = row[alias]
+                    break
+        if not data.get("company"):
+            counts["skipped"] += 1
+            continue
+        _, status = insert_lead(conn, data)
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def export_odoo_updates_csv(conn, query):
+    where, args = filter_where(query)
+    rows = conn.execute(f"SELECT * FROM leads {where} ORDER BY last_emailed DESC, updated DESC", args).fetchall()
+    output = io.StringIO()
+    fields = [
+        "Company", "Contact", "Email", "Odoo Suggested Note", "Last Drafted",
+        "Email Drafted", "Next Email Step", "Suggested Next Activity",
+        "Suggested Next Activity Date", "Stage Suggestion", "Sequence Angle",
+        "CTA Style", "Reply CTA", "Reply Outcome", "Personalization Score",
+        "Reason To Believe", "Research Evidence", "Research Source URL", "Confidence", "Do Not Claim", "Opt Out Safe",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for row in rows:
+        email_last_stage = int(row["email_last_stage"] or 0)
+        email_stage = int(row["email_stage"] or 1)
+        plan_count = int(row["email_plan_count"] or DEFAULT_EMAIL_PLAN_COUNT)
+        drafted = "Yes" if email_last_stage else "No"
+        next_step = "Sequence complete" if email_stage > plan_count else f"Email {email_stage}"
+        note_bits = []
+        if email_last_stage:
+            note_bits.append(f"Gmail draft created for Email {email_last_stage} on {row['last_emailed']}.")
+        else:
+            note_bits.append("No Gmail draft has been created from this local assistant yet.")
+        if row["next_action"]:
+            note_bits.append(f"Next action: {row['next_action']}.")
+        if row["next_action_date"]:
+            note_bits.append(f"Due: {row['next_action_date']}.")
+        if row["email_risky"]:
+            note_bits.append(f"Email excluded from drafting: {row['email_risk_reason']}.")
+        writer.writerow({
+            "Company": row["company"],
+            "Contact": row["contact"],
+            "Email": row["email"],
+            "Odoo Suggested Note": " ".join(note_bits),
+            "Last Drafted": row["last_emailed"] or "",
+            "Email Drafted": drafted,
+            "Next Email Step": next_step,
+            "Suggested Next Activity": row["next_action"] or "",
+            "Suggested Next Activity Date": row["next_action_date"] or "",
+            "Stage Suggestion": row["stage"],
+            "Sequence Angle": row["sequence_angle"] or "",
+            "CTA Style": row["cta_style"] or "",
+            "Reply CTA": row["reply_cta"] or reply_cta_for_style(row["cta_style"]),
+            "Reply Outcome": row["reply_outcome"] or "",
+            "Personalization Score": personalization_score(dict(row)),
+            "Reason To Believe": row["reason_to_believe"] or "",
+            "Research Evidence": row["research_evidence"] or "",
+            "Research Source URL": row["research_source_url"] or "",
+            "Confidence": row["confidence"] or "",
+            "Do Not Claim": row["do_not_claim"] or "",
+            "Opt Out Safe": "No" if suppression_match(conn, row["company"], row["email"]) else "Yes",
+        })
+    return output.getvalue().encode("utf-8")
+
+
+def export_weekly_coaching_csv(conn):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Metric", "Value"])
+    rows = conn.execute("SELECT * FROM leads").fetchall()
+    leads = [dict(row) for row in rows]
+    active = [l for l in leads if l.get("stage") in ACTIVE_STAGES]
+    # Calendar-week approximation avoids extra date parsing in the single-file stdlib app.
+    drafted_recent = [l for l in leads if l.get("last_emailed") and l["last_emailed"][:10] >= (datetime.now() - timedelta(days=7)).date().isoformat()]
+    replies = [l for l in leads if l.get("reply_outcome")]
+    positive = [l for l in replies if l.get("reply_outcome") in ("Replied positive", "Booked")]
+    opt_outs = conn.execute("SELECT COUNT(*) c FROM suppressed WHERE restored=0").fetchone()["c"]
+    overdue = [l for l in active if l.get("next_action_date") and l["next_action_date"] <= today_iso()]
+    cleanup = [l for l in active if personalization_score(l) < 60 or not l.get("contact") or not l.get("email") or not l.get("industry")]
+    writer.writerow(["Active leads", len(active)])
+    writer.writerow(["Drafted last 7 days", len(drafted_recent)])
+    writer.writerow(["Replies logged", len(replies)])
+    writer.writerow(["Positive/booked replies", len(positive)])
+    writer.writerow(["Open opt-outs", opt_outs])
+    writer.writerow(["Due or overdue follow-ups", len(overdue)])
+    writer.writerow(["Leads needing cleanup", len(cleanup)])
+    writer.writerow([])
+    writer.writerow(["Breakdown", "Name", "Drafted", "Replies", "Positive/Booked", "Opt-outs/Stops"])
+    for label, field in [("Sequence angle", "sequence_angle"), ("CTA style", "cta_style"), ("Industry", "industry")]:
+        values = sorted({l.get(field) or "(blank)" for l in leads})
+        for value in values:
+            subset = [l for l in leads if (l.get(field) or "(blank)") == value]
+            writer.writerow([
+                label,
+                value,
+                sum(1 for l in subset if l.get("last_emailed")),
+                sum(1 for l in subset if l.get("reply_outcome")),
+                sum(1 for l in subset if l.get("reply_outcome") in ("Replied positive", "Booked")),
+                sum(1 for l in subset if l.get("reply_outcome") == "Asked to stop"),
+            ])
+    writer.writerow([])
+    writer.writerow(["Recommended focus", "Reason"])
+    for lead in sorted(cleanup, key=lambda l: personalization_score(l))[:25]:
+        reasons = draft_quality_warnings(lead, {"min_personalization_score": "60", "require_contact_name": "1", "require_industry": "1"})
+        writer.writerow([lead.get("company") or "", "; ".join(reasons) or "Improve personalization"])
+    return output.getvalue().encode("utf-8")
+
+
+def playbook_payload(conn):
+    settings = get_settings(conn)
+    return {
+        "version": 1,
+        "exported_at": now_iso(),
+        "email_plan_count": settings.get("email_plan_count") or str(DEFAULT_EMAIL_PLAN_COUNT),
+        "email_templates": json.loads(normalize_templates(settings.get("email_templates", "[]"), int(settings.get("email_plan_count") or DEFAULT_EMAIL_PLAN_COUNT))),
+        "email_signature": settings.get("email_signature") or "",
+        "daily_target": settings.get("daily_target") or "20",
+        "min_personalization_score": settings.get("min_personalization_score") or "60",
+        "require_contact_name": settings.get("require_contact_name") or "1",
+        "require_industry": settings.get("require_industry") or "1",
+        "require_custom_first_line": settings.get("require_custom_first_line") or "0",
+        "require_software_stack": settings.get("require_software_stack") or "0",
+        "sequence_presets": json.loads(normalize_sequence_presets(settings.get("sequence_presets", "[]"))),
+    }
+
+
+def gemini_prompt_text():
+    path = os.path.join(os.getcwd(), "GEMINI_IMPORT_PROMPT.md")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "Create a CSV for import into the Odoo Gmail Draft Assistant."
+
+
+def gemini_deep_research_prompt_text():
+    path = os.path.join(os.getcwd(), "GEMINI_DEEP_RESEARCH_PROMPT.md")
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "Use Gemini Deep Research to source each account, then return READABLE_REVIEW and IMPORT_CSV."
+
+
+def csv_template(kind="gemini"):
+    base = [
+        "company", "contact", "title", "email", "email_generic", "phone", "website", "city", "state",
+        "industry", "sub_industry", "software_used", "software_renewal_date", "source", "stage", "notes",
+    ]
+    gemini = [
+        "odoo_evaluation_version", "odoo_evaluation_date", "odoo_evaluation_year",
+        "previous_demo_notes", "previous_blocker", "apps_evaluated", "lost_category", "lost_reason",
+        "company_summary", "why_now", "workflow_hypothesis", "research_evidence", "research_source_url",
+        "confidence", "do_not_claim", "reason_to_believe", "role_lens", "claim_safety", "customer_language",
+        "reply_type_goal", "pain_points", "industry_holes", "value_angle", "proof_points", "sequence_angle",
+        "custom_first_line", "reply_goal", "cta_style", "reply_cta", "next_action", "next_action_date",
+    ]
+    output = io.StringIO()
+    fields = base + (gemini if kind == "gemini" else ["next_action", "next_action_date"])
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    return output.getvalue().encode("utf-8")
+
+
+def preview_import_csv(conn, content):
+    text = content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    counts = {
+        "rows": 0, "ready": 0, "missing_company": 0, "missing_direct_email": 0,
+        "duplicates": 0, "suppressed": 0, "generic_only": 0, "weak_research": 0, "malformed": 0,
+    }
+    samples = []
+    for row in reader:
+        counts["rows"] += 1
+        company = (row.get("company") or row.get("Company") or row.get("Customer") or row.get("Opportunity Name") or "").strip()
+        email_addr = (row.get("email") or row.get("Email") or row.get("Direct Email") or "").strip()
+        generic = (row.get("email_generic") or row.get("Generic Email") or "").strip()
+        issues = []
+        if None in row:
+            counts["malformed"] += 1
+            issues.append("malformed CSV row")
+        research_issues = gemini_research_warnings(row)
+        if not company:
+            counts["missing_company"] += 1
+            issues.append("missing company")
+        if not email_addr:
+            counts["missing_direct_email"] += 1
+            issues.append("missing direct email")
+        elif is_generic_email(email_addr):
+            counts["generic_only"] += 1
+            issues.append("direct email looks generic")
+        if company and conn.execute("SELECT id FROM leads WHERE lower(company)=lower(?)", (company,)).fetchone():
+            counts["duplicates"] += 1
+            issues.append("duplicate company")
+        if company and suppression_match(conn, company, email_addr or generic):
+            counts["suppressed"] += 1
+            issues.append("suppressed")
+        if research_issues:
+            counts["weak_research"] += 1
+            issues.extend(research_issues[:2])
+        if not issues:
+            counts["ready"] += 1
+        if issues and len(samples) < 12:
+            samples.append({"company": company or "(blank)", "email": email_addr or generic, "issues": issues})
+    return {"counts": counts, "samples": samples, "headers": reader.fieldnames or []}
+
+
+def backup_now():
+    if not os.path.exists(DB_PATH):
+        return ""
+    os.makedirs("backups", exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    name = f"crm-manual-{stamp}.db"
+    shutil.copy2(DB_PATH, os.path.join("backups", name))
+    return name
+
+
+def list_backups():
+    if not os.path.isdir("backups"):
+        return []
+    rows = []
+    for name in sorted(os.listdir("backups"), reverse=True):
+        if not name.endswith(".db"):
+            continue
+        path = os.path.join("backups", name)
+        rows.append({"name": name, "size": os.path.getsize(path), "modified": datetime.fromtimestamp(os.path.getmtime(path)).isoformat(sep=" ", timespec="seconds")})
+    return rows
+
+
+def restore_backup(name):
+    safe = os.path.basename(name or "")
+    path = os.path.join("backups", safe)
+    if not safe.endswith(".db") or not os.path.exists(path):
+        raise ValueError("Backup not found")
+    backup_now()
+    shutil.copy2(path, DB_PATH)
+    return safe
+
+
+def friendly_error(exc):
+    text = str(exc)
+    lower = text.lower()
+    if "authentication failed" in lower or "invalid credentials" in lower or "login failed" in lower:
+        return "Gmail rejected the login. Use a Google App Password, not your regular Gmail password, and make sure 2-Step Verification is on."
+    if "gmail address and app password" in lower:
+        return text
+    if "name or service not known" in lower or "network" in lower or "timed out" in lower:
+        return "Could not reach Gmail. Check internet connection and try again."
+    if "not eligible for drafting" in lower:
+        return "This lead is not ready for drafting. Check direct email, suppression, stage, email risk, and today's draft status."
+    return text or "Something went wrong."
+
+
+def health_report(conn):
+    settings = get_settings(conn)
+    lead_count = conn.execute("SELECT COUNT(*) c FROM leads").fetchone()["c"]
+    ready_count = len(draft_preview_rows(conn, int(settings.get("daily_target") or 20), settings))
+    suppressed_count = conn.execute("SELECT COUNT(*) c FROM suppressed WHERE restored=0").fetchone()["c"]
+    backups = list_backups()
+    return {
+        "database": os.path.abspath(DB_PATH),
+        "database_exists": os.path.exists(DB_PATH),
+        "backups": len(backups),
+        "last_backup": backups[0]["modified"] if backups else "",
+        "gmail_email": settings.get("gmail_email") or "",
+        "gmail_configured": bool(settings.get("gmail_email") and settings.get("gmail_app_password")),
+        "leads": lead_count,
+        "ready_preview_count": sum(1 for row in draft_preview_rows(conn, int(settings.get("daily_target") or 20), settings) if row["ready"]),
+        "suppressed": suppressed_count,
+        "gemini_prompt": os.path.exists("GEMINI_IMPORT_PROMPT.md"),
+    }
+
+
+def append_gmail_test_draft(settings):
+    sender = settings.get("gmail_email", "").strip()
+    password = settings.get("gmail_app_password", "").replace(" ", "")
+    if not sender or not password:
+        raise ValueError("Gmail address and App Password are required. Use a Google App Password, not your regular Gmail password.")
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = sender
+    msg["Subject"] = "CRM Gmail draft test"
+    msg.set_content("This is a test draft from the Odoo Gmail Draft Assistant. You can delete it.", subtype="plain", charset="utf-8")
+    msg.add_alternative("<p>This is a test draft from the Odoo Gmail Draft Assistant. You can delete it.</p>", subtype="html", charset="utf-8")
+    with imaplib.IMAP4_SSL("imap.gmail.com", 993) as imap:
+        imap.login(sender, password)
+        status, _ = imap.append('"[Gmail]/Drafts"', r"(\Draft)", imaplib.Time2Internaldate(time.time()), msg.as_bytes())
+        if status != "OK":
+            raise RuntimeError("Gmail rejected the draft append. Check the Gmail account and App Password.")
+        imap.logout()
+
+
+def mock_lead_rows():
+    return [
+        {"company": "Atlas Robotics Group", "contact": "Maya Chen", "title": "VP Operations", "email": "maya.chen@example.com", "phone": "555-2101", "city": "Austin", "state": "TX", "industry": "Robotics & Automation", "sub_industry": "warehouse robotics", "software_used": "NetSuite, Salesforce, Arena PLM, Jira", "software_renewal_date": "2026-10-15", "source": "Mock", "notes": "Evaluating robot fleet deployment but sales cycle stalls when finance asks for payback proof."},
+        {"company": "PierPoint Foundation Repair", "contact": "Caleb Morris", "title": "Owner", "email": "caleb.morris@example.com", "phone": "555-2102", "city": "Tampa", "state": "FL", "industry": "Foundation & Structural Repair", "sub_industry": "foundation repair", "software_used": "ServiceTitan, JobNimbus, CompanyCam, QuickBooks", "software_renewal_date": "2026-09-01", "source": "Mock", "notes": "High inspection volume after storms; estimates are not followed up consistently."},
+        {"company": "Northline HVAC Services", "contact": "Jenna Patel", "title": "Sales Manager", "email": "jenna.patel@example.com", "phone": "555-2103", "city": "Phoenix", "state": "AZ", "industry": "Field Service", "sub_industry": "HVAC", "software_used": "ServiceTitan, CallRail, Podium, QuickBooks", "software_renewal_date": "2026-11-30", "source": "Mock", "notes": "Replacement quotes go cold after first visit during seasonal spikes."},
+        {"company": "ForgeWorks Manufacturing", "contact": "Drew Lawson", "title": "Plant Director", "email": "drew.lawson@example.com", "phone": "555-2104", "city": "Cleveland", "state": "OH", "industry": "Industrial Manufacturing", "sub_industry": "metal fabrication", "software_used": "JobBOSS, E2 Shop System, Fishbowl, QuickBooks", "software_renewal_date": "2027-01-15", "source": "Mock", "notes": "RFQs, inventory availability, and production handoff are tracked in separate spreadsheets."},
+        {"company": "BrightCart Retail", "contact": "Sofia Nguyen", "title": "Director of Stores", "email": "sofia.nguyen@example.com", "phone": "555-2105", "city": "Denver", "state": "CO", "industry": "Retail", "sub_industry": "multi-location retail", "software_used": "Shopify POS, Lightspeed, Cin7, Klaviyo", "source": "Mock", "notes": "POS and inventory are not synced cleanly across locations and eCommerce."},
+        {"company": "Summit Supply Wholesale", "contact": "Marcus Reed", "title": "GM", "email": "marcus.reed@example.com", "phone": "555-2106", "city": "Charlotte", "state": "NC", "industry": "Distribution & Wholesale", "sub_industry": "industrial distributors", "software_used": "NetSuite, Fishbowl, ShipStation, QuickBooks Enterprise", "software_renewal_date": "2026-12-31", "source": "Mock", "notes": "Inside sales cannot see stock issues before promising delivery dates."},
+        {"company": "Harbor SaaS Labs", "contact": "Priya Shah", "title": "Revenue Ops Lead", "email": "priya.shah@example.com", "phone": "555-2107", "city": "San Diego", "state": "CA", "industry": "SaaS & Technology", "sub_industry": "B2B SaaS", "software_used": "HubSpot, Stripe, Chargebee, Zendesk", "source": "Mock", "notes": "Subscription renewals, support tickets, and expansion opportunities are disconnected."},
+        {"company": "Copper Ridge Builders", "contact": "Evan Brooks", "title": "Estimator", "email": "evan.brooks@example.com", "phone": "555-2108", "city": "Nashville", "state": "TN", "industry": "Construction", "sub_industry": "commercial builders", "software_used": "Procore, Sage 100 Contractor, QuickBooks, Buildertrend", "source": "Mock", "notes": "Proposal follow-up depends on individual estimator memory."},
+        {"company": "ClearPath Dental Group", "contact": "Amelia Torres", "title": "Practice Administrator", "email": "amelia.torres@example.com", "phone": "555-2109", "city": "Orlando", "state": "FL", "industry": "Healthcare", "sub_industry": "dental practices", "software_used": "Dentrix, Open Dental, Solutionreach, QuickBooks", "source": "Mock", "notes": "New patient inquiries and treatment plan follow-up are not visible in one pipeline."},
+        {"company": "GreenRow Solar", "contact": "Noah Bennett", "title": "Sales Director", "email": "noah.bennett@example.com", "phone": "555-2110", "city": "Raleigh", "state": "NC", "industry": "Energy & Utilities", "sub_industry": "solar installers", "software_used": "Aurora Solar, OpenSolar, Salesforce, QuickBooks", "source": "Mock", "notes": "Site surveys, proposals, financing docs, and installation scheduling are disconnected."},
+        {"company": "BlueFork Foods", "contact": "Lena Garcia", "title": "Operations Manager", "email": "lena.garcia@example.com", "phone": "555-2111", "city": "Chicago", "state": "IL", "industry": "Food & Beverage", "sub_industry": "food manufacturing", "software_used": "BatchMaster, NetSuite, Fishbowl, QuickBooks", "source": "Mock", "notes": "Ingredient purchasing, batch production, and wholesale orders are hard to reconcile."},
+        {"company": "MetroLine Logistics", "contact": "Owen Kim", "title": "Fleet Manager", "email": "owen.kim@example.com", "phone": "555-2112", "city": "Atlanta", "state": "GA", "industry": "Logistics & Transportation", "sub_industry": "fleet maintenance", "software_used": "Fleetio, Samsara, Motive, QuickBooks", "source": "Mock", "notes": "Maintenance work orders and customer delivery commitments are managed in separate tools."},
+    ]
+
+
+def seed_mock_leads(conn):
+    counts = {"created": 0, "duplicate": 0, "suppressed": 0, "skipped": 0}
+    for idx, row in enumerate(mock_lead_rows()):
+        row = dict(row)
+        row["priority"] = 3 if idx < 5 else 2
+        row["email_plan_count"] = 6
+        lead_id, status = insert_lead(conn, row)
+        counts[status] = counts.get(status, 0) + 1
+        if lead_id and status in ("created", "duplicate"):
+            if status == "duplicate":
+                existing = lead_by_id(conn, lead_id)
+                update_lead(conn, lead_id, dict(existing, **row))
+            lead = lead_by_id(conn, lead_id)
+            lead_for_generation = dict(lead, pain_points="", industry_holes="", value_angle="", proof_points="")
+            strategy = lead_strategy(lead_for_generation)
+            conn.execute(
+                """
+                UPDATE leads SET pain_points=?, industry_holes=?, value_angle=?, proof_points=?,
+                    lead_email_templates=?, updated=?
+                WHERE id=?
+                """,
+                (
+                    strategy["pain"], strategy["holes"], strategy["angle"], strategy["proof"],
+                    json.dumps(generated_lead_templates(lead_for_generation)), now_iso(), lead_id,
+                ),
+            )
+            add_timeline(conn, lead_id, "Mock data", "Mock lead refreshed with tailored Odoo email sequence")
+    conn.commit()
+    return counts

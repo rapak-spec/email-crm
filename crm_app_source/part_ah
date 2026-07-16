@@ -1,0 +1,350 @@
+
+
+def export_csv(conn, query):
+    where, args = filter_where(query)
+    rows = conn.execute(f"SELECT * FROM leads {where} ORDER BY priority DESC, updated DESC", args).fetchall()
+    output = io.StringIO()
+    fields = [
+        "company", "contact", "title", "email", "email_generic", "phone", "website", "city",
+        "state", "industry", "sub_industry", "software_used", "software_renewal_date", "source", "stage", "priority", "notes",
+        "pain_points", "industry_holes", "value_angle", "proof_points", "next_action",
+        "next_action_date", "email_stage", "email_plan_count", "email_last_stage",
+        "company_summary", "why_now", "workflow_hypothesis", "research_evidence",
+        "research_source_url", "confidence", "do_not_claim", "reason_to_believe",
+        "role_lens", "claim_safety", "customer_language", "reply_type_goal",
+        "sequence_angle", "custom_first_line", "reply_goal", "cta_style", "reply_cta",
+        "reply_outcome", "reply_outcome_ts", "last_emailed", "emailed_count", "created", "updated",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({field: row[field] for field in fields})
+    return output.getvalue().encode("utf-8")
+
+
+def filter_where(query):
+    clauses = []
+    args = []
+    q = query.get("q", [""])[0].strip()
+    if q:
+        clauses.append("(company LIKE ? OR contact LIKE ? OR email LIKE ? OR email_generic LIKE ? OR notes LIKE ? OR lost_reason LIKE ? OR lost_category LIKE ?)")
+        args.extend([f"%{q}%"] * 7)
+    for field in ["stage", "state", "city", "industry", "source", "lost_category"]:
+        value = query.get(field, [""])[0].strip()
+        if value:
+            clauses.append(f"{field}=?")
+            args.append(value)
+    priority = query.get("priority", [""])[0].strip()
+    if priority:
+        clauses.append("priority=?")
+        args.append(int(priority))
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    return where, args
+
+
+class CRMHandler(BaseHTTPRequestHandler):
+    server_version = "LocalCRM/1.0"
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    def read_json(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if not length:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def send_json(self, data, status=200):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_bytes(self, body, content_type, filename=None):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def not_found(self):
+        self.send_json({"error": "Not found"}, 404)
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        query = urllib.parse.parse_qs(parsed.query)
+        conn = connect()
+        try:
+            if path == "/":
+                self.send_bytes(INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
+            elif path == "/api/bootstrap":
+                self.send_json(self.bootstrap(conn))
+            elif path == "/api/leads":
+                self.send_json({"leads": self.list_leads(conn, query)})
+            elif path.startswith("/api/leads/"):
+                lead_id = int(path.split("/")[-1])
+                lead = lead_by_id(conn, lead_id)
+                if not lead:
+                    return self.not_found()
+                self.send_json({"lead": lead, "timeline": lead_timeline(conn, lead_id)})
+            elif path == "/api/activities":
+                self.send_json({"activities": self.activities(conn, query)})
+            elif path == "/api/suppressed":
+                rows = conn.execute(
+                    "SELECT * FROM suppressed WHERE restored=0 ORDER BY ts DESC"
+                ).fetchall()
+                self.send_json({"suppressed": [dict(row) for row in rows]})
+            elif path == "/api/export":
+                self.send_bytes(export_csv(conn, query), "text/csv; charset=utf-8", "leads.csv")
+            elif path == "/api/odoo-updates":
+                self.send_bytes(export_odoo_updates_csv(conn, query), "text/csv; charset=utf-8", "odoo-draft-updates.csv")
+            elif path == "/api/weekly-coaching":
+                self.send_bytes(export_weekly_coaching_csv(conn), "text/csv; charset=utf-8", "weekly-coaching.csv")
+            elif path == "/api/playbook":
+                body = json.dumps(playbook_payload(conn), indent=2).encode("utf-8")
+                self.send_bytes(body, "application/json; charset=utf-8", "odoo-draft-playbook.json")
+            elif path == "/api/gemini-prompt":
+                self.send_bytes(gemini_prompt_text().encode("utf-8"), "text/markdown; charset=utf-8", "GEMINI_IMPORT_PROMPT.md")
+            elif path == "/api/gemini-deep-research-prompt":
+                self.send_bytes(gemini_deep_research_prompt_text().encode("utf-8"), "text/markdown; charset=utf-8", "GEMINI_DEEP_RESEARCH_PROMPT.md")
+            elif path == "/api/template/odoo":
+                self.send_bytes(csv_template("odoo"), "text/csv; charset=utf-8", "odoo-import-template.csv")
+            elif path == "/api/template/gemini":
+                self.send_bytes(csv_template("gemini"), "text/csv; charset=utf-8", "gemini-enriched-import-template.csv")
+            elif path == "/api/health":
+                self.send_json({"health": health_report(conn), "backups": list_backups()})
+            elif path == "/api/draft-preview":
+                settings = get_settings(conn)
+                limit = int(query.get("limit", [settings.get("daily_target") or 20])[0] or 20)
+                self.send_json({"leads": draft_preview_rows(conn, limit, settings)})
+            else:
+                self.not_found()
+        finally:
+            conn.close()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        conn = connect()
+        try:
+            if path == "/api/leads":
+                lead_id, status = insert_lead(conn, self.read_json())
+                self.send_json({"id": lead_id, "status": status})
+            elif re.match(r"^/api/leads/\d+$", path):
+                lead_id = int(path.split("/")[-1])
+                lead = update_lead(conn, lead_id, self.read_json())
+                if not lead:
+                    return self.not_found()
+                self.send_json({"lead": lead, "timeline": lead_timeline(conn, lead_id)})
+            elif re.match(r"^/api/leads/\d+/delete$", path):
+                lead_id = int(path.split("/")[-2])
+                lead = lead_by_id(conn, lead_id)
+                if not lead:
+                    return self.not_found()
+                for table in ("notes", "activities", "timeline"):
+                    conn.execute(f"DELETE FROM {table} WHERE lead_id=?", (lead_id,))
+                conn.execute("DELETE FROM leads WHERE id=?", (lead_id,))
+                conn.commit()
+                self.send_json({"ok": True})
+            elif path.endswith("/note"):
+                lead_id = int(path.split("/")[-2])
+                data = self.read_json()
+                text = str(data.get("text", "")).strip()
+                if text:
+                    conn.execute("INSERT INTO notes(lead_id, ts, text) VALUES(?, ?, ?)", (lead_id, now_iso(), text))
+                    conn.commit()
+                self.send_json({"timeline": lead_timeline(conn, lead_id)})
+            elif path.endswith("/activity"):
+                lead_id = int(path.split("/")[-2])
+                data = self.read_json()
+                typ = data.get("type") if data.get("type") in ACTIVITY_TYPES else "To-do"
+                due = str(data.get("due") or today_iso())
+                note = str(data.get("note") or "")
+                conn.execute(
+                    "INSERT INTO activities(lead_id, type, due, note, created) VALUES(?, ?, ?, ?, ?)",
+                    (lead_id, typ, due, note, now_iso()),
+                )
+                conn.execute(
+                    "UPDATE leads SET next_action=?, next_action_date=?, updated=? WHERE id=?",
+                    (typ + (f": {note}" if note else ""), due, now_iso(), lead_id),
+                )
+                conn.commit()
+                add_timeline(conn, lead_id, "Activity", f"{typ} scheduled for {due}")
+                self.send_json({"lead": lead_by_id(conn, lead_id), "timeline": lead_timeline(conn, lead_id)})
+            elif path.endswith("/lost"):
+                lead_id = int(path.split("/")[-2])
+                data = self.read_json()
+                reason = str(data.get("reason") or "").strip()
+                if not reason:
+                    return self.send_json({"error": "Lost reason is required"}, 400)
+                category = str(data.get("category") or "Other").strip()
+                if category not in LOST_CATEGORIES:
+                    category = "Other"
+                lead = lead_by_id(conn, lead_id)
+                update_lead(conn, lead_id, dict(
+                    lead,
+                    stage="Lost",
+                    next_action="",
+                    next_action_date="",
+                    lost_category=category,
+                    lost_reason=reason,
+                    lost_ts=now_iso(),
+                ))
+                add_timeline(conn, lead_id, "Lost", f"{category}: {reason}")
+                self.send_json({"lead": lead_by_id(conn, lead_id), "timeline": lead_timeline(conn, lead_id)})
+            elif path.endswith("/restore"):
+                lead_id = int(path.split("/")[-2])
+                lead = lead_by_id(conn, lead_id)
+                if not lead:
+                    return self.not_found()
+                update_lead(conn, lead_id, dict(lead, stage="New", lost_category="", lost_reason="", lost_ts=""))
+                add_timeline(conn, lead_id, "Restored", "Moved from Lost back to active CRM")
+                self.send_json({"lead": lead_by_id(conn, lead_id), "timeline": lead_timeline(conn, lead_id)})
+            elif path.endswith("/reopen"):
+                lead_id = int(path.split("/")[-2])
+                lead = lead_by_id(conn, lead_id)
+                if not lead:
+                    return self.not_found()
+                due = add_business_days(today_iso(), 1)
+                update_lead(conn, lead_id, dict(
+                    lead,
+                    stage="Follow-up",
+                    next_action="Follow-up call",
+                    next_action_date=due,
+                    reply_outcome="Reopened",
+                    reply_outcome_ts=now_iso(),
+                    lost_category="",
+                    lost_reason="",
+                    lost_ts="",
+                ))
+                conn.execute(
+                    "INSERT INTO activities(lead_id, type, due, note, created) VALUES(?, 'Call', ?, 'Follow up after lost-lead recovery reply', ?)",
+                    (lead_id, due, now_iso()),
+                )
+                conn.commit()
+                add_timeline(conn, lead_id, "Recovered", "Restored from Lost after reply; follow-up call scheduled")
+                self.send_json({"lead": lead_by_id(conn, lead_id), "timeline": lead_timeline(conn, lead_id)})
+            elif path.endswith("/suppress"):
+                lead_id = int(path.split("/")[-2])
+                data = self.read_json()
+                self.suppress_lead(conn, lead_id, str(data.get("reason") or "Opt-out"))
+                self.send_json({"ok": True})
+            elif path.endswith("/engaged"):
+                lead_id = int(path.split("/")[-2])
+                due = add_business_days(today_iso(), 1)
+                lead = lead_by_id(conn, lead_id)
+                update_lead(conn, lead_id, dict(lead, stage="Follow-up", next_action="Follow-up call", next_action_date=due))
+                conn.execute(
+                    "INSERT INTO activities(lead_id, type, due, note, created) VALUES(?, 'Call', ?, 'Follow up after email engagement', ?)",
+                    (lead_id, due, now_iso()),
+                )
+                conn.commit()
+                add_timeline(conn, lead_id, "Engaged", "Clicked/opened email; follow-up call scheduled")
+                self.send_json({"lead": lead_by_id(conn, lead_id), "timeline": lead_timeline(conn, lead_id)})
+            elif path.endswith("/draft"):
+                lead_id = int(path.split("/")[-2])
+                self.draft_one(conn, lead_id)
+            elif path.endswith("/lost-recovery-draft"):
+                lead_id = int(path.split("/")[-2])
+                self.draft_lost_recovery(conn, lead_id)
+            elif path.endswith("/generate-emails"):
+                lead_id = int(path.split("/")[-2])
+                self.generate_lead_emails(conn, lead_id)
+            elif re.match(r"^/api/activities/\d+/done$", path):
+                activity_id = int(path.split("/")[-2])
+                self.finish_activity(conn, activity_id)
+            elif path == "/api/settings":
+                set_settings(conn, self.read_json())
+                self.send_json({"settings": self.safe_settings(conn)})
+            elif path == "/api/test-gmail":
+                append_gmail_test_draft(get_settings(conn))
+                self.send_json({"ok": True, "message": "Test draft created in Gmail Drafts."})
+            elif path == "/api/backup-now":
+                self.send_json({"ok": True, "backup": backup_now(), "backups": list_backups()})
+            elif path == "/api/restore-backup":
+                data = self.read_json()
+                self.send_json({"ok": True, "restored": restore_backup(data.get("name"))})
+            elif path == "/api/playbook":
+                data = self.read_json()
+                payload = {
+                    "email_plan_count": data.get("email_plan_count"),
+                    "email_templates": json.dumps(data.get("email_templates") or []),
+                    "email_signature": data.get("email_signature"),
+                    "daily_target": data.get("daily_target"),
+                    "min_personalization_score": data.get("min_personalization_score"),
+                    "require_contact_name": data.get("require_contact_name"),
+                    "require_industry": data.get("require_industry"),
+                    "require_custom_first_line": data.get("require_custom_first_line"),
+                    "require_software_stack": data.get("require_software_stack"),
+                    "sequence_presets": json.dumps(data.get("sequence_presets") or []),
+                }
+                set_settings(conn, {k: v for k, v in payload.items() if v is not None})
+                self.send_json({"settings": self.safe_settings(conn)})
+            elif path == "/api/draft-batch":
+                data = self.read_json()
+                self.draft_batch(conn, int(data.get("limit") or 20))
+            elif path == "/api/import":
+                length = int(self.headers.get("Content-Length", "0"))
+                counts = import_csv(conn, self.rfile.read(length))
+                self.send_json({"counts": counts})
+            elif path == "/api/import-preview":
+                length = int(self.headers.get("Content-Length", "0"))
+                self.send_json(preview_import_csv(conn, self.rfile.read(length)))
+            elif path == "/api/mock-leads":
+                self.send_json({"counts": seed_mock_leads(conn), "leads": self.list_leads(conn, {})})
+            elif re.match(r"^/api/suppressed/\d+/restore$", path):
+                sid = int(path.split("/")[-2])
+                restored_id = self.restore_suppressed(conn, sid)
+                self.send_json({"ok": True, "lead_id": restored_id})
+            else:
+                self.not_found()
+        except Exception as exc:
+            self.send_json({"error": friendly_error(exc)}, 500)
+        finally:
+            conn.close()
+
+    def bootstrap(self, conn):
+        today_count = conn.execute(
+            "SELECT COUNT(*) c FROM leads WHERE date(last_emailed)=date('now', 'localtime')"
+        ).fetchone()["c"]
+        return {
+            "stages": STAGES,
+            "lost_categories": LOST_CATEGORIES,
+            "odoo_releases": ODOO_RELEASE_INTEL,
+            "activity_types": ACTIVITY_TYPES,
+            "industry_library": industry_library(),
+            "settings": self.safe_settings(conn),
+            "daily": {"drafted": today_count, "target": int(get_settings(conn).get("daily_target") or 20)},
+            "leads": self.list_leads(conn, {}),
+        }
+
+    def safe_settings(self, conn):
+        settings = get_settings(conn)
+        settings["gmail_app_password"] = "********" if settings.get("gmail_app_password") else ""
+        count = max(1, min(30, int(settings.get("email_plan_count") or DEFAULT_EMAIL_PLAN_COUNT)))
+        settings["email_plan_count"] = str(count)
+        settings["email_templates"] = normalize_templates(settings.get("email_templates", "[]"), count)
+        settings["sequence_presets"] = normalize_sequence_presets(settings.get("sequence_presets", "[]"))
+        return settings
+
+    def list_leads(self, conn, query):
+        where, args = filter_where(query)
+        sort = query.get("sort", ["priority"])[0] if query else "priority"
+        order = {
+            "priority": "priority DESC, updated DESC",
+            "updated": "updated DESC",
+            "company": "company COLLATE NOCASE ASC",
+            "next_action": "next_action_date IS NULL, next_action_date ASC",
+            "lost_category": "lost_category COLLATE NOCASE ASC, lost_ts DESC",
+            "lost_ts": "lost_ts DESC, updated DESC",
+        }.get(sort, "priority DESC, updated DESC")
+        rows = conn.execute(f"SELECT * FROM leads {where} ORDER BY {order}", args).fetchall()
+        return [dict(row) for row in rows]
+
+    def activities(self, conn, query):
+        view = query.get("view", ["agenda"])[0] if query else "agenda"

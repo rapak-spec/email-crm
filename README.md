@@ -315,7 +315,8 @@ Use **Suppression** to search suppressed records and restore a record if it was 
 ## Files
 
 ```text
-crm.py      # server, database, API, and single-page UI
-crm.db      # local database
-backups/    # automatic database backups
+crm.py           # launcher; double-click/run this file through the scripts
+crm_app_source/  # split source files for the app
+crm.db           # local database, ignored by Git
+backups/         # automatic database backups, ignored by Git
 ```

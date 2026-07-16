@@ -1,0 +1,350 @@
+        const data = await api("/api/import", {method:"POST", body: buffer.slice(0)});
+        closeModal();
+        await friendlyAlert("Import Complete", `Created ${data.counts.created}, duplicates ${data.counts.duplicate}, suppressed ${data.counts.suppressed}, skipped ${data.counts.skipped}.`);
+        await refreshLeads();
+      };
+      $("backToGeminiPaste").onclick = openGeminiPasteModal;
+    }
+    function openGeminiPasteModal() {
+      openModal(`<div class="dialog-head"><h1>Paste Gemini Output</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="fit-box">Paste the whole Gemini answer here. It can include a readable table plus a CSV block, or just raw CSV like the screenshot. The app will extract the import rows.</div>
+        <textarea id="geminiPasteText" class="prompt-box" placeholder="Paste Gemini output here"></textarea>
+        <div class="quick"><button class="primary" id="previewGeminiPaste">Preview import</button><button onclick="closeModal()">Close</button></div>`);
+      $("previewGeminiPaste").onclick = () => openImportPreviewFromText($("geminiPasteText").value);
+    }
+    const yesNo = (v) => v ? "Ready" : "Needs attention";
+
+    async function openHealthModal() {
+      const data = await api("/api/health");
+      const h = data.health;
+      openModal(`<div class="dialog-head"><h1>Health Check</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="grid">
+          <div class="event"><b>Gmail</b>${esc(yesNo(h.gmail_configured))}<br><span class="small">${esc(h.gmail_email || "No Gmail configured")}</span></div>
+          <div class="event"><b>Leads</b>${h.leads} imported · ${h.ready_preview_count} ready in today's batch</div>
+          <div class="event"><b>Backups</b>${h.backups} backups<br><span class="small">${esc(h.last_backup || "No backup yet")}</span></div>
+          <div class="event"><b>Gemini prompts</b>${esc(yesNo(h.gemini_prompt))}<br><span class="small">Use normal Gemini for cleanup; use Deep Research for source-backed account research.</span></div>
+        </div>
+        <div class="quick">
+          <button class="primary" id="testGmailBtn">Test Gmail draft</button>
+          <button id="backupNowBtn">Backup now</button>
+          <button id="restoreBtn">Restore backup</button>
+          <button id="troubleshootBtn">Troubleshooting</button>
+        </div>
+        <div id="healthResult" class="small"></div>`);
+      $("testGmailBtn").onclick = async () => {
+        $("healthResult").textContent = "Testing Gmail...";
+        const res = await api("/api/test-gmail", {method:"POST"});
+        $("healthResult").textContent = res.message || "Test draft created.";
+      };
+      $("backupNowBtn").onclick = async () => {
+        const res = await api("/api/backup-now", {method:"POST"});
+        $("healthResult").textContent = `Backup created: ${res.backup}`;
+      };
+      $("restoreBtn").onclick = () => openRestoreModal(data.backups || []);
+      $("troubleshootBtn").onclick = openTroubleshootingModal;
+    }
+
+    async function openSetupModal() {
+      const data = await api("/api/health");
+      const h = data.health;
+      openModal(`<div class="dialog-head"><h1>First-Time Setup</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="event"><b>1. Gmail settings</b>${esc(yesNo(h.gmail_configured))}<br><span class="small">Add Gmail address, sender name, signature, and Google App Password.</span></div>
+        <div class="event"><b>2. Test Gmail</b>Create one harmless test draft to confirm Gmail is connected.</div>
+        <div class="event"><b>3. Import leads</b>Use an Odoo CSV, normal Gemini cleanup, or Gemini Deep Research for stronger source-backed lead context.</div>
+        <div class="event"><b>4. Create today's drafts</b>Click Emails for today, review warnings, then Draft to Gmail.</div>
+        <div class="event"><b>5. Update Odoo</b>Export Odoo update CSV after drafting.</div>
+        <div class="quick">
+          <button id="setupSettings">Open settings</button>
+          <button id="setupTest" class="primary">Test Gmail draft</button>
+          <button id="setupTemplates">CSV templates</button>
+          <button id="setupImport">Import CSV</button>
+        </div>
+        <div id="setupResult" class="small"></div>`);
+      $("setupSettings").onclick = () => $("settingsBtn").click();
+      $("setupTemplates").onclick = () => $("templatesBtn").click();
+      $("setupImport").onclick = () => $("csvFile").click();
+      $("setupTest").onclick = async () => {
+        $("setupResult").textContent = "Testing Gmail...";
+        const res = await api("/api/test-gmail", {method:"POST"});
+        $("setupResult").textContent = res.message || "Test draft created.";
+      };
+    }
+
+    function openRestoreModal(backups) {
+      openModal(`<div class="dialog-head"><h1>Restore Backup</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="fit-box">Restoring first creates a fresh backup of the current database, then replaces it with the selected backup.</div>
+        <div class="timeline">${backups.map(b => `<div class="event"><b>${esc(b.name)}</b>${esc(b.modified)}<br><button data-restore-backup="${esc(b.name)}">Restore this backup</button></div>`).join("") || `<div class="small">No backups found.</div>`}</div>`);
+      document.querySelectorAll("[data-restore-backup]").forEach(btn => btn.onclick = async () => {
+        const ok = await friendlyConfirm({
+          title: "Restore Backup",
+          body: `Restore ${btn.dataset.restoreBackup}? The app will make a fresh backup first, then reload.`,
+          confirmText: "Restore"
+        });
+        if (!ok) return;
+        await api("/api/restore-backup", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name:btn.dataset.restoreBackup})});
+        await friendlyAlert("Backup Restored", "The app will reload now.");
+        location.reload();
+      });
+    }
+
+    function openTroubleshootingModal() {
+      openModal(`<div class="dialog-head"><h1>Troubleshooting</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="event"><b>Gmail drafts do not appear</b>Use a Google App Password, not the normal Gmail password. Make sure 2-Step Verification is on.</div>
+        <div class="event"><b>No leads ready</b>Check for direct emails, suppressed companies, risky email warnings, low personalization score, or leads already drafted today.</div>
+        <div class="event"><b>CSV import failed</b>Download a CSV template, keep the headers, or paste Gemini's full answer into Paste Gemini Output so the app can extract the CSV block.</div>
+        <div class="event"><b>App closes</b>Keep the launcher/terminal window open while using the app.</div>
+        <div class="event"><b>Wrong data imported</b>Use Health → Restore backup. The app backs up on startup and before manual restore.</div>`);
+    }
+
+    function openVersionGuideModal() {
+      const rows = ["17", "18", "19", "19.4"].map(version => {
+        const item = state.odooReleases[version] || {};
+        const general = (item.general || []).slice(0, 5).map(x => `<li>${esc(x)}</li>`).join("");
+        return `<div class="event">
+          <b>${esc(item.label || "Odoo " + version)} · ${esc(item.released || "")}</b>
+          <ul>${general}</ul>
+          <div class="small">Recovery emails auto-match from the evaluated version/year to the newer releases most relevant to the lead's workflow.</div>
+        </div>`;
+      }).join("");
+      openModal(`<div class="dialog-head"><h1>Odoo Version Guide</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="fit-box">Use <b>Odoo evaluation date</b> when possible. The app maps the date to the likely Odoo version available then. If date is blank, it falls back to year, then manual version.</div>
+        <div class="timeline">${rows}</div>`);
+    }
+
+    $("closeDrawer").onclick = () => $("drawer").classList.remove("open");
+    $("setupBtn").onclick = openSetupModal;
+    $("setupBannerBtn").onclick = openSetupModal;
+    $("healthBtn").onclick = openHealthModal;
+    $("versionGuideBtn").onclick = openVersionGuideModal;
+    $("templatesBtn").onclick = () => {
+      openModal(`<div class="dialog-head"><h1>CSV Templates</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="fit-box">Use these when someone is unsure what columns to provide. Gemini-enriched is best for higher-quality emails.</div>
+        <div class="quick"><button onclick="location.href='/api/template/odoo'">Download basic Odoo template</button><button class="primary" onclick="location.href='/api/template/gemini'">Download Gemini-enriched template</button></div>`);
+    };
+    $("modeBtn").onclick = () => {
+      const next = document.body.classList.toggle("simple");
+      localStorage.setItem("simpleMode", next ? "1" : "0");
+      $("modeBtn").textContent = next ? "Advanced mode" : "Simple mode";
+    };
+    $("modeBtn").textContent = document.body.classList.contains("simple") ? "Advanced mode" : "Simple mode";
+    $("newLead").onclick = newLead;
+    $("activeLeadsBtn").onclick = async () => {
+      state.leadScope = "active";
+      state.metric = "";
+      state.activeCategory = "";
+      $("filterLostCategory").value = "";
+      if ($("sortBy").value === "lost_ts") $("sortBy").value = "priority";
+      await refreshLeads();
+    };
+    $("lostLeadsBtn").onclick = async () => {
+      state.leadScope = "lost";
+      state.metric = "";
+      state.activeCategory = "";
+      state.view = "list";
+      $("sortBy").value = "lost_ts";
+      await refreshLeads();
+    };
+    $("toggleView").onclick = () => { state.view = state.view === "board" ? "list" : "board"; render(); };
+    $("clearFilters").onclick = () => { state.metric = ""; state.activeCategory = ""; ["filterQ","filterPriority","filterState","filterCity","filterIndustry","filterSource","filterLostCategory"].forEach(id => $(id).value = ""); refreshLeads(); };
+    ["filterQ","filterPriority","filterState","filterCity","filterIndustry","filterSource","filterLostCategory","sortBy"].forEach(id => $(id).addEventListener("change", refreshLeads));
+    $("filterQ").addEventListener("input", () => { clearTimeout(window.qTimer); window.qTimer = setTimeout(refreshLeads, 180); });
+    $("exportBtn").onclick = () => location.href = "/api/export?" + filters().toString();
+    $("odooExportBtn").onclick = () => location.href = "/api/odoo-updates?" + filters().toString();
+    $("howToBtn").onclick = () => {
+      openModal(`<div class="dialog-head"><h1>How To Use</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="event">
+          <b>Fast daily workflow</b>
+          <ol>
+            <li>Import an Odoo or Gemini-enriched CSV.</li>
+            <li>Click <b>Emails for today</b>.</li>
+            <li>Review the preview. Rows with warnings will be skipped.</li>
+            <li>Click <b>Draft to Gmail</b>.</li>
+            <li>Open Gmail Drafts, review, and send.</li>
+            <li>Use <b>Odoo update CSV</b> to bring notes/status back into Odoo.</li>
+          </ol>
+        </div>
+        <div class="event">
+          <b>Best research workflow with Gemini Deep Research</b>
+          <ol>
+            <li>Export about 25 accounts from Odoo.</li>
+            <li>Click <b>Gemini research</b>, choose <b>Deep Research</b>, and copy the prompt.</li>
+            <li>Open Gemini Deep Research.</li>
+            <li>Paste the prompt and the account list into Deep Research.</li>
+            <li>Have Gemini return the readable review plus import CSV block for every row.</li>
+            <li>Paste Gemini's full answer back into <b>Paste Gemini Output</b>.</li>
+            <li>Click <b>Emails for today</b> and draft to Gmail.</li>
+          </ol>
+        </div>
+        <div class="event">
+          <b>When to use normal Gemini</b>
+          <p>Inside Gemini research, use Quick cleanup when Odoo already has decent context. Use Deep Research when the leads need real account research and source-backed personalization.</p>
+        </div>
+        <div class="event">
+          <b>What the app does automatically</b>
+          <p>It auto-tailors first lines, reply angles, role lens, claim safety, customer language, CTAs, sequence emails, and QA warnings before any Gmail drafts are created.</p>
+        </div>
+        <div class="event">
+          <b>When a row gets skipped</b>
+          <p>Rows can be skipped for missing required fields, risky email, suppression, low personalization score, weak proof, unsafe claims, or already drafted today.</p>
+        </div>`);
+    };
+    async function openGeminiPromptModal(initialMode="deep") {
+      const modes = {
+        deep: {
+          path: "/api/gemini-deep-research-prompt",
+          label: "Deep Research",
+          title: "Gemini Research",
+          description: "Use Deep Research for real account research. It requires source-backed evidence, richer workflow diagnosis, and an import CSV block for every row."
+        },
+        quick: {
+          path: "/api/gemini-prompt",
+          label: "Quick cleanup",
+          title: "Gemini Research",
+          description: "Use Quick cleanup when Odoo already has decent context and you mainly need formatting, cautious enrichment, or CSV cleanup."
+        }
+      };
+      let mode = modes[initialMode] ? initialMode : "deep";
+      openModal(`<div class="dialog-head"><h1>Gemini Research</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="tabs"><button id="geminiModeDeep">Deep Research</button><button id="geminiModeQuick">Quick cleanup</button></div>
+        <div class="fit-box" id="geminiModeHelp"></div>
+        <textarea id="geminiPromptText" class="prompt-box"></textarea>
+        <div class="quick"><button class="primary" id="copyGeminiPrompt">Copy prompt</button><button id="pasteGeminiOutput">Paste Gemini output</button><button onclick="closeModal()">Close</button></div>`);
+      async function loadGeminiMode(nextMode) {
+        mode = nextMode;
+        const config = modes[mode];
+        $("geminiModeHelp").textContent = config.description;
+        $("geminiModeDeep").classList.toggle("active", mode === "deep");
+        $("geminiModeQuick").classList.toggle("active", mode === "quick");
+        $("geminiPromptText").value = "Loading prompt...";
+        const res = await fetch(config.path);
+        $("geminiPromptText").value = await res.text();
+        $("copyGeminiPrompt").textContent = "Copy prompt";
+      }
+      $("geminiModeDeep").onclick = () => loadGeminiMode("deep");
+      $("geminiModeQuick").onclick = () => loadGeminiMode("quick");
+      $("copyGeminiPrompt").onclick = async () => {
+        await navigator.clipboard.writeText($("geminiPromptText").value);
+        $("copyGeminiPrompt").textContent = "Copied";
+      };
+      $("pasteGeminiOutput").onclick = openGeminiPasteModal;
+      await loadGeminiMode(mode);
+    }
+    $("geminiPromptBtn").onclick = async () => openGeminiPromptModal("deep");
+    $("weeklyBtn").onclick = () => location.href = "/api/weekly-coaching";
+    $("playbookBtn").onclick = () => {
+      openModal(`<div class="dialog-head"><h1>Playbook</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="fit-box">Export/import templates, quality gates, and sequence presets for colleagues. Gmail credentials are never included.</div>
+        <div class="quick"><button onclick="location.href='/api/playbook'">Export playbook</button><button id="pbImport">Import playbook</button></div>
+        <div class="timeline">${parsePresets().map(p => `<div class="event"><b>${esc(p.name)}</b>${esc(p.angle || "")} · ${esc(p.cta_style || "")}<br><span class="small">${(p.templates || []).length} emails</span></div>`).join("")}</div>`);
+      $("pbImport").onclick = () => $("playbookFile").click();
+    };
+    $("importBtn").onclick = () => $("csvFile").click();
+    $("csvFile").onchange = async () => {
+      const file = $("csvFile").files[0]; if (!file) return;
+      const buffer = await file.arrayBuffer();
+      const preview = await api("/api/import-preview", {method:"POST", body: buffer.slice(0)});
+      const c = preview.counts;
+      openModal(`<div class="dialog-head"><h1>Import Preview</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="grid">
+          <div class="event"><b>Total rows</b>${c.rows}</div>
+          <div class="event"><b>Looks ready</b>${c.ready}</div>
+          <div class="event"><b>Missing direct email</b>${c.missing_direct_email}</div>
+          <div class="event"><b>Duplicates</b>${c.duplicates}</div>
+          <div class="event"><b>Suppressed</b>${c.suppressed}</div>
+          <div class="event"><b>Weak Gemini research</b>${c.weak_research || 0}</div>
+          <div class="event"><b>Malformed rows</b>${c.malformed || 0}</div>
+          <div class="event"><b>Missing company</b>${c.missing_company}</div>
+        </div>
+        <div class="timeline">${(preview.samples || []).map(s => `<div class="event"><b>${esc(s.company)}</b>${esc(s.email || "")}<br><span class="small">${esc(s.issues.join(", "))}</span></div>`).join("") || `<div class="small">No obvious issues found.</div>`}</div>
+        <button class="primary" id="confirmImport">Import rows</button>`);
+      $("confirmImport").onclick = async () => {
+        const data = await api("/api/import", {method:"POST", body: buffer.slice(0)});
+        closeModal();
+        await friendlyAlert("Import Complete", `Created ${data.counts.created}, duplicates ${data.counts.duplicate}, suppressed ${data.counts.suppressed}, skipped ${data.counts.skipped}.`);
+        await refreshLeads();
+      };
+      $("csvFile").value = "";
+    };
+    $("playbookFile").onchange = async () => {
+      const file = $("playbookFile").files[0]; if (!file) return;
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const res = await api("/api/playbook", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data)});
+      state.settings = res.settings;
+      $("playbookFile").value = "";
+      closeModal();
+      await friendlyAlert("Playbook Imported", "Your saved email settings and playbook are now loaded.");
+      await load();
+    };
+    $("settingsBtn").onclick = () => {
+      const s = state.settings;
+      const templates = parseTemplates();
+      openModal(`<div class="dialog-head"><h1>Settings</h1><button class="icon" onclick="closeModal()">×</button></div>
+        <div class="grid">
+          <label><span>Gmail address</span><input id="setEmail" value="${esc(s.gmail_email || "")}"></label>
+          <label><span>Sender name</span><input id="setSenderName" value="${esc(s.sender_name || "Rayhan")}"></label>
+          <label><span>Gmail App Password</span><input id="setPass" type="password" placeholder="${s.gmail_app_password ? "Saved" : "16-character password"}"></label>
+          <label><span>Daily target</span><input id="setTarget" type="number" value="${esc(s.daily_target || 20)}"></label>
+          <label><span>Planned email sequence</span><input id="setPlanCount" type="number" min="1" max="30" value="${esc(s.email_plan_count || 6)}"></label>
+          <label><span>Minimum personalization score</span><input id="setMinScore" type="number" min="0" max="100" value="${esc(s.min_personalization_score || 60)}"></label>
+          <label><span>Require contact name</span><select id="setReqContact"><option value="1" ${s.require_contact_name !== "0" ? "selected" : ""}>Yes</option><option value="0" ${s.require_contact_name === "0" ? "selected" : ""}>No</option></select></label>
+          <label><span>Require industry</span><select id="setReqIndustry"><option value="1" ${s.require_industry !== "0" ? "selected" : ""}>Yes</option><option value="0" ${s.require_industry === "0" ? "selected" : ""}>No</option></select></label>
+          <label><span>Require first line</span><select id="setReqFirstLine"><option value="0" ${s.require_custom_first_line !== "1" ? "selected" : ""}>No</option><option value="1" ${s.require_custom_first_line === "1" ? "selected" : ""}>Yes</option></select></label>
+          <label><span>Require software stack</span><select id="setReqSoftware"><option value="0" ${s.require_software_stack !== "1" ? "selected" : ""}>No</option><option value="1" ${s.require_software_stack === "1" ? "selected" : ""}>Yes</option></select></label>
+          <label class="full"><span>HTML signature</span><textarea id="setSig">${esc(s.email_signature || "")}</textarea></label>
+        </div>
+        <div class="fit-box">Quality gates control which leads can be drafted in batch. Leads that fail gates still appear in Draft Preview with warnings.</div>
+        <div class="quick"><button id="testGmailSettings">Test Gmail draft</button><button id="exportPlaybook">Export playbook</button><button id="importPlaybook">Import playbook</button></div>
+        <div id="settingsResult" class="small"></div>
+        <div class="fit-box">Merge fields: {sender_name}, {first_name}, {contact}, {company}, {city}, {city_fallback}, {state}, {industry}, {sub_industry}, {industry_fallback}, {software_used}, {software_renewal_date}, {odoo_evaluation_date}, {odoo_evaluation_version}, {odoo_evaluation_year}, {likely_software}, {odoo_modules}, {competitor}, {competitor_angle}, {odoo_win}, {price_angle}, {renewal_angle}, {renewal_line}, {title}, {website}, {source}, {notes}, {company_summary}, {why_now}, {workflow_hypothesis}, {research_evidence}, {research_source_url}, {confidence}, {do_not_claim}, {reason_to_believe}, {role_lens}, {claim_safety}, {customer_language}, {reply_type_goal}, {pain_points}, {industry_holes}, {value_angle}, {proof_points}, {sequence_angle}, {custom_first_line}, {reply_goal}, {cta_style}, {reply_cta}, {lost_category}, {lost_reason}, {lost_ts}, {personalization_score}, {email_stage}, {email_plan_count}</div>
+        <div id="templateRows"></div>
+        <button class="primary" id="saveSettings">Save settings</button>`);
+      function defaultTemplate(n) {
+        return {
+          subject: n === 1 ? "A quick idea for {company}" : `Following up with {company} - email ${n}`,
+          body: `<p>Hi {first_name},</p><p>I wanted to follow up with a quick idea for {company}. For a ${"{industry_fallback}"} team in ${"{city_fallback}"}, the goal is usually cleaner follow-up and fewer missed opportunities.</p><p>Worth a quick conversation?</p>`
+        };
+      }
+      function drawTemplateRows() {
+        const count = Math.max(1, Math.min(30, Number($("setPlanCount").value || 6)));
+        const rows = Array.from({length: count}, (_, i) => {
+          const n = i + 1;
+          const existing = templates[i] || defaultTemplate(n);
+          return `<div class="event">
+            <b>Email ${n}</b>
+            <label><span>Subject</span><input data-template-subject="${i}" value="${esc(existing.subject || "")}"></label>
+            <label><span>HTML body</span><textarea data-template-body="${i}">${esc(existing.body || "")}</textarea></label>
+          </div>`;
+        });
+        $("templateRows").innerHTML = rows.join("");
+      }
+      $("setPlanCount").addEventListener("change", drawTemplateRows);
+      drawTemplateRows();
+      $("saveSettings").onclick = async () => {
+        const count = Math.max(1, Math.min(30, Number($("setPlanCount").value || 6)));
+        const nextTemplates = Array.from({length: count}, (_, i) => ({
+          subject: document.querySelector(`[data-template-subject="${i}"]`)?.value || defaultTemplate(i + 1).subject,
+          body: document.querySelector(`[data-template-body="${i}"]`)?.value || defaultTemplate(i + 1).body,
+        }));
+        const payload = {
+          gmail_email:$("setEmail").value,
+          sender_name:$("setSenderName").value,
+          email_signature:$("setSig").value,
+          daily_target:$("setTarget").value,
+          min_personalization_score:$("setMinScore").value,
+          require_contact_name:$("setReqContact").value,
+          require_industry:$("setReqIndustry").value,
+          require_custom_first_line:$("setReqFirstLine").value,
+          require_software_stack:$("setReqSoftware").value,
+          email_plan_count:String(count),
+          email_templates:JSON.stringify(nextTemplates),
+          email_subject:nextTemplates[0]?.subject || "",
+          email_body:nextTemplates[0]?.body || ""
+        };
+        if ($("setPass").value) payload.gmail_app_password = $("setPass").value;
+        const data = await api("/api/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+        state.settings = data.settings; state.daily.target = Number(payload.daily_target || 20); closeModal(); await refreshLeads();
+      };
+      $("exportPlaybook").onclick = () => location.href = "/api/playbook";
+      $("importPlaybook").onclick = () => $("playbookFile").click();
+      $("testGmailSettings").onclick = async () => {
