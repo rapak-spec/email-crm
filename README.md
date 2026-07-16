@@ -16,6 +16,16 @@ Linux: run ./start-crm.sh
 
 Keep the launcher window open while using the app.
 
+To update later after your manager publishes a new version:
+
+```text
+Windows / ThinkPad: double-click update-crm.bat
+Mac: double-click update-crm.command
+Linux: run ./update-crm.sh
+```
+
+Updates pull the newest app files from GitHub. They do not upload or overwrite the teammate's local `crm.db` data.
+
 Manual start:
 
 ```bash
@@ -317,6 +327,8 @@ Use **Suppression** to search suppressed records and restore a record if it was 
 ```text
 crm.py           # launcher; double-click/run this file through the scripts
 crm_app_source/  # compressed source payload for the app
+start-crm.bat    # Windows / ThinkPad start file
+update-crm.bat   # Windows / ThinkPad update file
 crm.db           # local database, ignored by Git
 backups/         # automatic database backups, ignored by Git
 ```
