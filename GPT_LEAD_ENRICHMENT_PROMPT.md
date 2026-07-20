@@ -41,7 +41,7 @@ It's {sender_name} with Odoo.
 
 The reason I'm reaching out is that Odoo could help simplify the back end of {workflow}. It brings {relevant_modules} into one system, so the team can reduce duplicate tools, clean up handoffs, and control software spend.
 
-Odoo is $61 per user per month, which can make it easier to compare against separate tools and add-ons.
+Odoo is $61 per user per month and used by over 20 million users, which can make it easier to compare against separate tools and add-ons.
 
 Would it be worth connecting for 15 minutes this Friday or next week to see if there is a fit?
 ```
