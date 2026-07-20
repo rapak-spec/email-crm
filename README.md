@@ -84,7 +84,7 @@ Use **Simple mode** for colleagues who only need the core workflow. Advanced but
 ## Intended Workflow
 
 1. Export leads or opportunities from Odoo.
-2. Optional but recommended: click **Gemini research**, paste the prompt and Odoo list into Gemini, and have Gemini return the enriched CSV.
+2. Optional but recommended: click **LLM research**, choose Claude, Gemini, or GPT, paste the prompt and Odoo list into that tool, and have it return the enriched CSV.
 3. Use **Import Odoo CSV** in this app.
 4. Click **Emails for today**.
 5. Review the auto-tailored queue and click **Draft to Gmail**.
@@ -116,9 +116,9 @@ sequence_angle, custom_first_line, reply_goal, cta_style, reply_cta
 
 The importer dedupes by company name and skips any company or email currently on the suppression list.
 
-## Gemini-Enriched Import
+## LLM-Enriched Import
 
-Use **Gemini research** in the app, or open `GEMINI_IMPORT_PROMPT.md` / `GEMINI_DEEP_RESEARCH_PROMPT.md`. The prompts tell Gemini to turn a raw Odoo export or pasted lead list into an import-ready CSV with:
+Use **LLM research** in the app, or open `CLAUDE_LEAD_ENRICHMENT_PROMPT.md`, `GPT_LEAD_ENRICHMENT_PROMPT.md`, `GEMINI_IMPORT_PROMPT.md`, or `GEMINI_DEEP_RESEARCH_PROMPT.md`. The prompts tell Claude, GPT, or Gemini to turn a raw Odoo export or pasted lead list into an import-ready CSV with:
 
 ```text
 company summary
@@ -148,7 +148,7 @@ reply CTA
 
 The importer reads those columns directly. If Gemini leaves something blank, the app still auto-tailors missing fields when **Emails for today** opens.
 
-For best account-research quality, use Gemini Deep Research in batches of about **25 accounts**. Use larger batches only when the Odoo export already has strong websites/domains and you are comfortable reviewing the output before import.
+For best account-research quality, use a source-backed/deep-research mode in batches of about **25 accounts**. Use larger batches only when the Odoo export already has strong websites/domains and you are comfortable reviewing the output before import.
 
 ## Gmail Drafts
 
@@ -347,6 +347,10 @@ crm.py           # launcher; double-click/run this file through the scripts
 crm_app_source/  # compressed source payload for the app
 start-crm.bat    # Windows / ThinkPad start file
 update-crm.bat   # Windows / ThinkPad update file
+CLAUDE_LEAD_ENRICHMENT_PROMPT.md
+GPT_LEAD_ENRICHMENT_PROMPT.md
+GEMINI_IMPORT_PROMPT.md
+GEMINI_DEEP_RESEARCH_PROMPT.md
 crm.db           # local database, ignored by Git
 backups/         # automatic database backups, ignored by Git
 ```
