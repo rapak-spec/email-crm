@@ -26,6 +26,7 @@ For each company:
 - If browsing/source lookup is unavailable, mark the row Low confidence and use cautious wording.
 - Do not infer from company name alone.
 - Do not invent software, renewal dates, emails, or prior Odoo history.
+- Do not claim the rep left a LinkedIn message, voicemail, call, or note unless that is explicitly in the source data.
 
 ## Email Context Goal
 
@@ -36,11 +37,13 @@ Hi {first_name},
 
 {custom_first_line}
 
-It's {sender_name}. I just left you a message on LinkedIn or a voicemail.
+It's {sender_name} with Odoo.
 
-I'm reaching out because I work with Odoo and thought it could simplify the back end of {workflow}. Odoo can bring {relevant_modules} into one system, so the team does not have to keep paying for and jumping between multiple softwares.
+The reason I'm reaching out is that Odoo could help simplify the back end of {workflow}. It brings {relevant_modules} into one system, so the team can reduce duplicate tools, clean up handoffs, and control software spend.
 
-Would it be worth connecting for 15 minutes this Friday or next week?
+Odoo is $61 per user per month, which can make it easier to compare against separate tools and add-ons.
+
+Would it be worth connecting for 15 minutes this Friday or next week to see if there is a fit?
 ```
 
 Write like a real rep. Keep the language direct, plain, and safe.
