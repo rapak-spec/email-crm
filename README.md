@@ -16,7 +16,29 @@ Mac: open Terminal in this folder and run sh start-crm.sh
 
 Keep the launcher window open while using the app.
 
-If the browser does not open automatically, manually open `http://127.0.0.1:8765`.
+If the browser does not open automatically, manually open `http://127.0.0.1:8766`.
+
+Mac one-time auto-start setup:
+
+```bash
+sh install-mac-autostart.command
+```
+
+After that, the CRM starts when the Mac logs in and restarts if the local server quits. If the laptop was shut down or restarted, open `http://127.0.0.1:8766` after logging in.
+
+Mac auto-start uses a local running copy here:
+
+```text
+~/Library/Application Support/Odoo Gmail Draft Assistant
+```
+
+That avoids macOS privacy blocks on background apps inside Documents or Downloads. The installer copies the current `crm.db` the first time so existing leads come with it. After pulling a GitHub update, run `sh install-mac-autostart.command` again to refresh the auto-start copy without overwriting its existing database.
+
+To remove Mac auto-start:
+
+```bash
+sh uninstall-mac-autostart.command
+```
 
 If Mac says **start-crm.command Not Opened**, click **Done** and use Terminal instead:
 
@@ -47,13 +69,13 @@ Updates pull the newest app files from GitHub. They do not upload or overwrite t
 Manual start:
 
 ```bash
-python3 crm.py
+CRM_PORT=8766 python3 crm.py
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8765
+http://127.0.0.1:8766
 ```
 
 Optional environment variables:

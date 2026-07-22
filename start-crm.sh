@@ -1,7 +1,9 @@
 #!/bin/sh
 cd "$(dirname "$0")" || exit 1
 
-URL="${CRM_URL:-http://127.0.0.1:${CRM_PORT:-8765}}"
+PORT="${CRM_PORT:-8766}"
+export CRM_PORT="$PORT"
+URL="${CRM_URL:-http://127.0.0.1:${PORT}}"
 
 echo "Starting Odoo Gmail Draft Assistant..."
 echo "Keep this terminal open while using the app."
@@ -15,6 +17,24 @@ if ! command -v python3 >/dev/null 2>&1; then
   echo "sudo apt install python3"
   echo
   exit 1
+fi
+
+if command -v curl >/dev/null 2>&1 && curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+  echo
+  echo "The CRM is already running."
+  echo "Open this link in the browser:"
+  echo "$URL"
+  echo
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$URL" >/dev/null 2>&1
+  elif command -v gio >/dev/null 2>&1; then
+    gio open "$URL" >/dev/null 2>&1
+  elif command -v sensible-browser >/dev/null 2>&1; then
+    sensible-browser "$URL" >/dev/null 2>&1
+  elif command -v open >/dev/null 2>&1; then
+    open "$URL"
+  fi
+  exit 0
 fi
 
 python3 crm.py &
