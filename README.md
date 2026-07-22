@@ -201,7 +201,7 @@ This app creates real messages in Gmail's Drafts folder. It does not send emails
 
 Use **Emails for today** to review and create a batch for eligible leads. Eligible leads must be active, have a direct non-generic email, have an industry for safe Odoo positioning, pass basic validation, not be suppressed, not be complete in the sequence, and not already have a draft created today. Contact names, website research, and software stack help, but are optional.
 
-The preview includes an **Email template** picker. Built-in options include the tailored default, a coworker-proven direct template, a short price/consolidation template, a vertical gap audit comparison template, and an Odoo lost-lead reactivation template. Set the default template in **Settings**.
+The preview includes an **Email template** picker. Built-in options include the tailored default, a coworker-proven direct template, a short price/consolidation template, a vertical gap audit comparison template, and an Odoo lost-lead reactivation template. Set the default template in **Settings**. You can also change the template on an individual email card before drafting, which lets reps mix angles in one Gmail batch.
 
 ## Workbench Queues
 
