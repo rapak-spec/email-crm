@@ -127,6 +127,15 @@ company, industry, email
 
 `name` or `Company` can be used instead of `company`. With only those fields, the app writes a safe industry-based Odoo pitch using the relevant Odoo apps and workflow patterns. More context is better, but it is not required.
 
+During import, choose whether the file contains:
+
+```text
+Active/new leads
+Odoo lost leads to re-engage
+```
+
+Odoo lost imports stay draftable, but they are labeled as prior Odoo lost/demo leads so reps can use recovery-style outreach.
+
 ```text
 company, Company, Customer, Opportunity, Opportunity Name
 contact, Contact, Contact Name, Customer Contact
@@ -191,6 +200,8 @@ This app creates real messages in Gmail's Drafts folder. It does not send emails
 5. Edit the sequence templates and signature.
 
 Use **Emails for today** to review and create a batch for eligible leads. Eligible leads must be active, have a direct non-generic email, have an industry for safe Odoo positioning, pass basic validation, not be suppressed, not be complete in the sequence, and not already have a draft created today. Contact names, website research, and software stack help, but are optional.
+
+The preview includes an **Email template** picker. Built-in options include the tailored default, a coworker-proven direct template, a short price/consolidation template, and an Odoo lost-lead reactivation template. Set the default template in **Settings**.
 
 ## Workbench Queues
 
