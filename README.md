@@ -119,6 +119,14 @@ The normal sales-rep workflow should be nearly no-touch. When **Emails for today
 
 Use **Import Odoo CSV** in the top bar. Recognized columns include both simple names and common Odoo export names:
 
+Minimum useful CSV:
+
+```text
+company, industry, email
+```
+
+`name` or `Company` can be used instead of `company`. With only those fields, the app writes a safe industry-based Odoo pitch using the relevant Odoo apps and workflow patterns. More context is better, but it is not required.
+
 ```text
 company, Company, Customer, Opportunity, Opportunity Name
 contact, Contact, Contact Name, Customer Contact
@@ -182,7 +190,7 @@ This app creates real messages in Gmail's Drafts folder. It does not send emails
 4. Enter the Gmail address, sender name, and App Password.
 5. Edit the sequence templates and signature.
 
-Use **Emails for today** to review and create a batch for eligible leads. Eligible leads must be active, have a direct non-generic email, pass basic validation, not be suppressed, not be complete in the sequence, and not already have a draft created today.
+Use **Emails for today** to review and create a batch for eligible leads. Eligible leads must be active, have a direct non-generic email, have an industry for safe Odoo positioning, pass basic validation, not be suppressed, not be complete in the sequence, and not already have a draft created today. Contact names, website research, and software stack help, but are optional.
 
 ## Workbench Queues
 
@@ -190,7 +198,7 @@ The top workbench gives colleagues a fast starting point:
 
 ```text
 Ready to draft    direct email, safe domain, next email due
-Needs cleanup     missing contact, email, industry, or safe email status
+Needs cleanup     missing direct email, industry, or safe email status
 Due today         follow-ups due now
 No next step      active leads that need an Odoo activity
 ```
@@ -215,10 +223,10 @@ Only ready rows are drafted. Quality gates live in **Settings**:
 
 ```text
 minimum personalization score
-require contact name
 require industry
-require custom first line
-require software stack
+optional contact-name requirement
+optional custom-first-line requirement
+optional software-stack requirement
 ```
 
 This lets a teammate review the batch before any real Gmail drafts are created. The final button is **Draft to Gmail**.
@@ -281,7 +289,7 @@ Reply CTA            The actual low-friction ask used in the email
 Outcome              Positive reply, neutral reply, booked, wrong person, no reply, etc.
 ```
 
-The panel shows a personalization readiness score. Higher scores mean the lead has enough context for a stronger draft: contact, direct email, industry, sub-industry, software stack, first line, pain point, value angle, and CTA.
+The panel shows a personalization readiness score. A simple lead can draft with company, industry, and direct email. Higher scores mean the lead has richer context for a stronger draft: contact, sub-industry, software stack, first line, pain point, value angle, source-backed evidence, and CTA.
 
 The following merge fields can be used in templates:
 
