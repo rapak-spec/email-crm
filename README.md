@@ -137,7 +137,7 @@ Odoo lost leads to re-engage
 Odoo lost imports stay draftable, but they are labeled as prior Odoo lost/demo leads so reps can use recovery-style outreach.
 
 ```text
-company, Company, Customer, Opportunity, Opportunity Name
+company, Company, Company Name, Business Name, Account, Account Name, Organization, Customer, Customer Name, Opportunity, Opportunity Name
 contact, Contact, Contact Name, Customer Contact
 title, Job Position, Function
 email, Email, Email Address, Direct Email
@@ -153,7 +153,7 @@ pain_points, industry_holes, value_angle, proof_points
 sequence_angle, custom_first_line, reply_goal, cta_style, reply_cta
 ```
 
-The importer dedupes by company name and skips any company or email currently on the suppression list.
+The importer dedupes by company name and skips any company or email currently on the suppression list. If company is blank, the app tries to infer a readable business name from the website or business email domain. It avoids personal email domains like Gmail, Yahoo, Outlook, and iCloud.
 
 ## LLM-Enriched Import
 
