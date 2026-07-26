@@ -203,6 +203,21 @@ Use **Emails for today** to review and create a batch for eligible leads. Eligib
 
 The preview includes an **Email template** picker. Built-in options include the tailored default, a coworker-proven direct template, a short price/consolidation template, an industry gap audit template, and an Odoo lost-lead reactivation template. Set the default template in **Settings**. You can also change the template on an individual email card before drafting, which lets reps mix angles in one Gmail batch.
 
+Use **Persona lens** on any lead or preview card when the same account needs to be framed for a different buyer. Options include Owner / CEO, Operations, Finance, Sales, IT / Systems, and General Manager. The app adjusts the pain point, value angle, Odoo modules, and CTA for that person, so a finance contact hears stack cost and reporting while an operations contact hears handoffs, throughput, inventory, and dispatch.
+
+Custom templates can also use these merge fields:
+
+```text
+{persona_lens}
+{persona_focus}
+{persona_pain}
+{persona_value}
+{persona_modules}
+{persona_cta}
+{persona_subject_hint}
+{persona_do_not_claim}
+```
+
 The **Industry gap audit** template uses a built-in industry gap library. It picks a likely competitor by vertical, names the workflow gap that competitor tends to win, explains the deeper ERP reason behind the gap, and positions the relevant Odoo apps as the way to close it. Example: HVAC maps to ServiceTitan and dispatch-to-invoice; manufacturing maps to NetSuite and quote-to-production; distribution maps to NetSuite and order-to-cash visibility.
 
 ## Workbench Queues
