@@ -203,6 +203,8 @@ Use **Emails for today** to review and create a batch for eligible leads. Eligib
 
 The preview includes an **Email template** picker. Built-in options include the tailored default, a coworker-proven direct template, a short price/consolidation template, an industry gap audit template, and an Odoo lost-lead reactivation template. Set the default template in **Settings**. You can also change the template on an individual email card before drafting, which lets reps mix angles in one Gmail batch.
 
+Settings lets reps edit the email sequence and signature as normal plain text. Blank lines become Gmail paragraphs automatically, URLs become links, and the first email shows a live Gmail-style preview while editing. The tailored default first email is intentionally short: first line, Odoo/value pitch, price, and a reply-first CTA.
+
 The final sequence email is a close-the-loop note with the subject **Should I close this out?**. It is designed to get a simple timing/no-need/still-exploring reply before the assistant stops nudging.
 
 Use **Persona lens** on any lead or preview card when the same account needs to be framed for a different buyer. Options include Owner / CEO, Operations, Finance, Sales, IT / Systems, and General Manager. The app adjusts the pain point, value angle, Odoo modules, and CTA for that person, so a finance contact hears stack cost and reporting while an operations contact hears handoffs, throughput, inventory, and dispatch.
